@@ -18,13 +18,13 @@ type portsListGetter interface {
 	getList(list []SerialPortInfo, ok bool)
 }
 
-// SerialPortInfo describes main info about active serial port
+// SerialPortInfo describes main information about active serial port
 type SerialPortInfo struct {
 	description string
 	path        string
 }
 
-// Description ia a serial ID of the device
+// Description contains serial ID of the device
 func (i SerialPortInfo) Description() string {
 	return i.description
 }
