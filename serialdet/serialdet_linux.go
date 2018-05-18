@@ -15,12 +15,59 @@
 package serialdet
 
 import (
+	"bufio"
+	"errors"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path"
+	"strconv"
+	"strings"
 )
 
 const udevSerialPath = "/dev/serial/by-id"
+const rootID = 0
+
+var procFiles = []string{
+	"/proc/tty/driver/serial",
+	"/proc/tty/driver/usbserial",
+}
+
+// @todo use /proc/tty/driver/serial
+
+func isRoot() bool {
+	cmd := exec.Command("id", "-u")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	userID, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	return err == nil && userID == rootID
+}
+
+func procfsList() ([]SerialPortInfo, error) {
+	if !isRoot() {
+		return nil, errors.New("Permission denied")
+	}
+	var parser procfsParser
+	ports := make([]SerialPortInfo, 0)
+	for _, procFN := range procFiles {
+		parser.Reset()
+		f, err := os.Open(procFN)
+		if err != nil {
+			return nil, err
+		}
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			parser.AddLine(scanner.Text())
+		}
+		if scanner.Err() != nil {
+			return nil, err
+		}
+		ports = append(ports, parser.GetList()...)
+	}
+	return ports, nil
+}
 
 func udevList() ([]SerialPortInfo, error) {
 	files, err := ioutil.ReadDir(udevSerialPath)
@@ -45,6 +92,9 @@ func udevList() ([]SerialPortInfo, error) {
 }
 
 func list() (list []SerialPortInfo, ok bool) {
+	if list, err := procfsList(); err == nil {
+		return list, true
+	}
 	if list, err := udevList(); err == nil {
 		return list, true
 	}
