@@ -26,6 +26,9 @@ import (
 )
 
 const udevSerialPath = "/dev/serial/by-id"
+const sysfsTTYPath = "/sys/class/tty/"
+const sysfsUSBPrefix = "ttyUSB"
+const devPath = "/dev"
 const rootID = 0
 
 var procFiles = []string{
@@ -33,7 +36,13 @@ var procFiles = []string{
 	"/proc/tty/driver/usbserial",
 }
 
-// @todo use /proc/tty/driver/serial
+type listFunc func() ([]SerialPortInfo, error)
+
+var listFunctions = []listFunc{
+	procfsList,
+	udevList,
+	sysfsList,
+}
 
 func isRoot() bool {
 	cmd := exec.Command("id", "-u")
@@ -45,6 +54,7 @@ func isRoot() bool {
 	return err == nil && userID == rootID
 }
 
+// procfsList parses /proc/tty/driver/*serial
 func procfsList() ([]SerialPortInfo, error) {
 	if !isRoot() {
 		return nil, errors.New("Permission denied")
@@ -69,6 +79,7 @@ func procfsList() ([]SerialPortInfo, error) {
 	return ports, nil
 }
 
+// uDevList parses /dev/serial/by-id
 func udevList() ([]SerialPortInfo, error) {
 	files, err := ioutil.ReadDir(udevSerialPath)
 	if err != nil {
@@ -91,13 +102,31 @@ func udevList() ([]SerialPortInfo, error) {
 	return ports, nil
 }
 
+// sysfsList returns only usb-serial devices without description
+// using information from /sys/class/tty/*
+func sysfsList() ([]SerialPortInfo, error) {
+	files, err := ioutil.ReadDir(sysfsTTYPath)
+	if err != nil {
+		return nil, err
+	}
+	ports := make([]SerialPortInfo, 0)
+	for _, file := range files {
+		if strings.HasPrefix(file.Name(), sysfsUSBPrefix) {
+			info := SerialPortInfo{
+				description: file.Name(),
+				path:        path.Join(devPath, file.Name()),
+			}
+			ports = append(ports, info)
+		}
+	}
+	return ports, nil
+}
+
 func list() (list []SerialPortInfo, ok bool) {
-	if list, err := procfsList(); err == nil {
-		return list, true
+	for _, fun := range listFunctions {
+		if list, err := fun(); err == nil {
+			return list, true
+		}
 	}
-	if list, err := udevList(); err == nil {
-		return list, true
-	}
-	// @todo others
 	return nil, false
 }
