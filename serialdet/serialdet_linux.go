@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -28,8 +29,11 @@ import (
 const udevSerialPath = "/dev/serial/by-id"
 const sysfsTTYPath = "/sys/class/tty/"
 const sysfsUSBPrefix = "ttyUSB"
+const sysfsDevUEvent = "device/uevent"
 const devPath = "/dev"
 const rootID = 0
+
+var ueventDriverRe = regexp.MustCompile(`^.*DRIVER=(.+)$`)
 
 var procFiles = []string{
 	"/proc/tty/driver/serial",
@@ -102,7 +106,7 @@ func udevList() ([]SerialPortInfo, error) {
 	return ports, nil
 }
 
-// sysfsList returns only usb-serial devices without description
+// sysfsList returns only usb-serial devices
 // using information from /sys/class/tty/*
 func sysfsList() ([]SerialPortInfo, error) {
 	files, err := ioutil.ReadDir(sysfsTTYPath)
@@ -112,14 +116,38 @@ func sysfsList() ([]SerialPortInfo, error) {
 	ports := make([]SerialPortInfo, 0)
 	for _, file := range files {
 		if strings.HasPrefix(file.Name(), sysfsUSBPrefix) {
+			descr, err := getUeventInfo(path.Join(sysfsTTYPath, file.Name()))
+			if err != nil {
+				descr = file.Name()
+			}
 			info := SerialPortInfo{
-				description: file.Name(),
+				description: descr,
 				path:        path.Join(devPath, file.Name()),
 			}
 			ports = append(ports, info)
 		}
 	}
 	return ports, nil
+}
+
+// getUeventInfo returns a driver name of device
+// by the information from /sys/class/tty/*/device/uevent
+func getUeventInfo(p string) (string, error) {
+	f, err := os.Open(path.Join(p, sysfsDevUEvent))
+	if err != nil {
+		return "", err
+	}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		match := ueventDriverRe.FindStringSubmatch(scanner.Text())
+		if len(match) == 2 {
+			return match[1], nil
+		}
+	}
+	if scanner.Err() != nil {
+		return "", err
+	}
+	return "", errors.New("Driver is not defined")
 }
 
 func list() (list []SerialPortInfo, ok bool) {
