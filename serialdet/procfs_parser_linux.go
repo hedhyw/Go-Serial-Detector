@@ -59,7 +59,6 @@ var parserInfoByHead = map[string]parserInfo{
 
 type procfsParser struct {
 	info *parserInfo
-
 	list []SerialPortInfo
 }
 

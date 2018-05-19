@@ -42,12 +42,14 @@ var procFiles = []string{
 
 type listFunc func() ([]SerialPortInfo, error)
 
+// listFunctions are in the obtaining order
 var listFunctions = []listFunc{
-	procfsList,
-	udevList,
-	sysfsList,
+	procfsList, // for root user
+	udevList,   // for regular user
+	sysfsList,  // last hope : lists only /dev/ttyUSB*
 }
 
+// isRoot checks that user has root privileges
 func isRoot() bool {
 	cmd := exec.Command("id", "-u")
 	out, err := cmd.Output()

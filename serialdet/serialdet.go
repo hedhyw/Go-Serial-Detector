@@ -14,17 +14,13 @@
 // limitations under the License.
 package serialdet
 
-type portsListGetter interface {
-	getList(list []SerialPortInfo, ok bool)
-}
-
 // SerialPortInfo describes main information about active serial port
 type SerialPortInfo struct {
 	description string
 	path        string
 }
 
-// Description contains serial ID of the device
+// Description contains serial ID or driver name of device
 func (i SerialPortInfo) Description() string {
 	return i.description
 }
