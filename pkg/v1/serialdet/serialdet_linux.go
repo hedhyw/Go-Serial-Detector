@@ -1,22 +1,8 @@
 // Package serialdet provides method for finding active serial ports
-// Copyright 2018 Krivchun Maxim. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
 package serialdet
 
 import (
 	"bufio"
-	"errors"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -26,71 +12,88 @@ import (
 	"strings"
 )
 
-const udevSerialPath = "/dev/serial/by-id"
-const sysfsTTYPath = "/sys/class/tty/"
-const sysfsUSBPrefix = "ttyUSB"
-const sysfsDevUEvent = "device/uevent"
-const devPath = "/dev"
-const rootID = 0
+const (
+	udevSerialPath = "/dev/serial/by-id"
+	sysfsTTYPath   = "/sys/class/tty/"
+	sysfsUSBPrefix = "ttyUSB"
+	sysfsDevUEvent = "device/uevent"
+	devPath        = "/dev"
+	rootID         = 0
+)
 
 var ueventDriverRe = regexp.MustCompile(`^.*DRIVER=(.+)$`)
 
-var procFiles = []string{
-	"/proc/tty/driver/serial",
-	"/proc/tty/driver/usbserial",
+func getProcFiles() [2]string {
+	return [...]string{
+		"/proc/tty/driver/serial",
+		"/proc/tty/driver/usbserial",
+	}
 }
 
 type listFunc func() ([]SerialPortInfo, error)
 
-// listFunctions are in the obtaining order
-var listFunctions = []listFunc{
-	procfsList, // for root user
-	udevList,   // for regular user
-	sysfsList,  // last hope : lists only /dev/ttyUSB*
+func getListFunctions() [3]listFunc {
+	return [...]listFunc{
+		procfsList, // for root user
+		udevList,   // for regular user
+		sysfsList,  // last hope : lists only /dev/ttyUSB*
+	}
 }
 
-// isRoot checks that user has root privileges
+// isRoot checks that user has root privileges.
 func isRoot() bool {
 	cmd := exec.Command("id", "-u")
+
 	out, err := cmd.Output()
 	if err != nil {
 		return false
 	}
+
 	userID, err := strconv.Atoi(strings.TrimSpace(string(out)))
+
 	return err == nil && userID == rootID
 }
 
-// procfsList parses /proc/tty/driver/*serial
+// procfsList parses /proc/tty/driver/*serial.
 func procfsList() ([]SerialPortInfo, error) {
 	if !isRoot() {
-		return nil, errors.New("Permission denied")
+		return nil, ErrPermissionDenied
 	}
+
 	var parser procfsParser
 	ports := make([]SerialPortInfo, 0)
-	for _, procFN := range procFiles {
+	for _, procFN := range getProcFiles() {
 		parser.Reset()
+
 		f, err := os.Open(procFN)
 		if err != nil {
 			return nil, err
 		}
+
 		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
-			parser.AddLine(scanner.Text())
+			if err = parser.AddLine(scanner.Text()); err != nil {
+				return nil, err
+			}
 		}
-		if scanner.Err() != nil {
+
+		if err = scanner.Err(); err != nil {
 			return nil, err
 		}
+
 		ports = append(ports, parser.GetList()...)
 	}
+
 	return ports, nil
 }
 
-// uDevList parses /dev/serial/by-id
+// uDevList parses /dev/serial/by-id.
 func udevList() ([]SerialPortInfo, error) {
 	files, err := ioutil.ReadDir(udevSerialPath)
 	if err != nil {
 		return nil, err
 	}
+
 	ports := make([]SerialPortInfo, 0)
 	for _, file := range files {
 		fullPath := path.Join(udevSerialPath, file.Name())
@@ -98,6 +101,7 @@ func udevList() ([]SerialPortInfo, error) {
 		if err != nil {
 			continue
 		}
+
 		absLinkPath := path.Join(udevSerialPath, link)
 		info := SerialPortInfo{
 			description: file.Name(),
@@ -105,6 +109,7 @@ func udevList() ([]SerialPortInfo, error) {
 		}
 		ports = append(ports, info)
 	}
+
 	return ports, nil
 }
 
@@ -115,6 +120,7 @@ func sysfsList() ([]SerialPortInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	ports := make([]SerialPortInfo, 0)
 	for _, file := range files {
 		if strings.HasPrefix(file.Name(), sysfsUSBPrefix) {
@@ -122,6 +128,7 @@ func sysfsList() ([]SerialPortInfo, error) {
 			if err != nil {
 				descr = file.Name()
 			}
+
 			info := SerialPortInfo{
 				description: descr,
 				path:        path.Join(devPath, file.Name()),
@@ -129,6 +136,7 @@ func sysfsList() ([]SerialPortInfo, error) {
 			ports = append(ports, info)
 		}
 	}
+
 	return ports, nil
 }
 
@@ -139,6 +147,7 @@ func getUeventInfo(p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		match := ueventDriverRe.FindStringSubmatch(scanner.Text())
@@ -146,17 +155,20 @@ func getUeventInfo(p string) (string, error) {
 			return match[1], nil
 		}
 	}
-	if scanner.Err() != nil {
+
+	if err := scanner.Err(); err != nil {
 		return "", err
 	}
-	return "", errors.New("Driver is not defined")
+
+	return "", ErrDriverNotDefined
 }
 
-func list() (list []SerialPortInfo, ok bool) {
-	for _, fun := range listFunctions {
-		if list, err := fun(); err == nil {
-			return list, true
+func list() (list []SerialPortInfo, err error) {
+	for _, fun := range getListFunctions() {
+		if list, err = fun(); err == nil {
+			return list, nil
 		}
 	}
-	return nil, false
+
+	return nil, err
 }
